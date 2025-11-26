@@ -1,0 +1,748 @@
+---
+title: 'Final Project'
+output:
+  html_document:
+    fig_height: 3
+    fig_width: 6
+    highlight: textmate
+    theme: cerulean
+---
+
+```{r setup, echo=FALSE, message=F, warning=F  }
+
+#=================================================================================
+#   This setup chunk is used for every assignment: 
+#   Modify line #24, leave the rest alone, and skip down to line #73!
+#=================================================================================
+
+  MyDir = "/Users/wancholuna/Desktop/Econ173" 
+  
+### Leave the rest of this chunk alone, unless you need to add a package
+  
+  # Sundstrom directory (leave this alone!)
+    SundstromDir <- "/Users/wsundstrom/Library/CloudStorage/GoogleDrive-wsundstrom@scu.edu/My Drive/Econ173/data"
+  
+  # Choose correct working directory and proceed
+    if (file.exists(SundstromDir)){
+      WorkDir = SundstromDir
+    } else {
+      WorkDir = MyDir
+    }
+    
+  # Set working directory 
+    setwd(WorkDir)
+    
+### Load the packages (all must have been installed)
+    library(knitr)
+    library(AER)
+    library(sandwich)
+    library(tidyverse)  
+    library(plm)
+    library(haven)
+    library(readxl)
+    library(modelsummary) 
+    library(lfe)
+    library(ivreg)
+    library(stargazer)
+    library(rvest)
+    
+### More settings
+  
+  # Root directory for knitr
+    opts_knit$set(root.dir = WorkDir)
+  
+  # turn off scientific notation except for big numbers
+    options(scipen = 9)
+  # set font size for ggplot (default is 12)
+    theme_set(theme_gray(base_size = 12))
+  
+```
+
+<base target="_top"/>
+
+ECON 173 Final Project\
+Name: Wancho Luna\
+December 10, 2024
+
+
+------------------------------------------------------------------------
+
+#### Abstract
+
+This project examines the employment effect of the minimum wage for two binding groups—cashiers and less-educated workers. In using data from the CPS-ORG, and in utilizing a two-way fixed effects regression model with state-specific trends, the findings reveal that minimum wage increases can impactfully raise wages for binding groups, without actually reducing employment, suggesting inelastic labor demand or cost absorption by firms. The study also explores potential wage and employment disparities between black and white workers, and the findings suggest minimal wage differences but no significant employment effects, indicating limited evidence of labor market discrimination in response to minimum wage policies. These results challenge the common assumptions of the competitive labor market model, and highlight the nuanced impacts of minimum wage laws.
+
+------------------------------------------------------------------------
+
+#### Introduction
+
+Economic theory states that in a competitive labor market model, a binding minimum wage will create a labor surplus. This happens because higher wages attract more people into the labor market, increasing the quantity of labor supplied, while firms reduce hiring due to higher costs, which decreases the quantity of labor demanded. The result is a reduction in employment, as more people are willing to work at a higher wage than there are jobs available.
+
+The magnitude of this effect depends on the elasticity of labor demand. If labor demand is highly elastic, even a small increase in the minimum wage can lead to significant reductions in employment. Contrastingly, if the demand for labor is inelastic, employment losses are likely to be less affected.
+
+However, these predictions rely on assumptions that may not always hold. For example, as popularized in a study by Carl and Krueger (1994), in monopsonistic markets, a binding minimum wage can increase both wages and employment. This is because monopsonistic firms, which aim to maximize profits, typically hire fewer workers at lower wages than in competitive markets. A minimum wage closer to the competitive equilibrium will incentivize firms to hire more workers.
+
+While economic theory offers a framework to understand potential employment effects of the minimum wage, these effects are not universal laws and depend on many other factors.
+
+
+------------------------------------------------------------------------
+
+```{r, results='asis', message=F, warning=F, comment=NA, echo=F}
+
+### Data input and manipulation
+
+### Load the Current Population Survey Outgoing Rotation Group data (from where you have saved it)
+
+    load("org_2000_2024.RData")
+
+  # merge the state names using the "statefip" variable
+    url <- "https://github.com/wsundstrom/econ173/raw/data/statefips.dta"
+    states <- read_dta(url) %>% 
+      select(statefip = statefips, state = statename, statecd)
+    org <- org %>% 
+      left_join(states)
+
+### BLS state minimum wage historical tables
+
+  # Scrape the HTML tables on the following website using rvest package:
+    url <- "https://www.dol.gov/agencies/whd/state/minimum-wage/history"
+    
+    
+  # Get the tables - this results in a list because there are multiple tables
+    minwage <- url %>%
+      read_html() %>%
+      html_nodes("table") 
+    
+  # the tables with the years we want (2000-) are the 3rd-6th 
+    minwage3 <- minwage %>%     
+      .[[3]] %>%                  # 3rd table
+      html_table() 
+    colnames(minwage3)[1] <- "state"
+    minwage4 <- minwage %>%     
+      .[[4]] %>%                  
+      html_table() 
+    colnames(minwage4)[1] <- "state"
+    minwage5 <- minwage %>%     
+      .[[5]] %>%                  
+      html_table() 
+    colnames(minwage5)[1] <- "state"
+    minwage6 <- minwage %>%     
+      .[[6]] %>%                  
+      html_table() 
+    colnames(minwage6)[1] <- "state"
+    
+  # minwageL and minwageU are the upper and lower values for states with a range
+    mintab <- minwage3 %>% 
+      left_join(minwage4) %>% 
+      left_join(minwage5) %>% 
+      left_join(minwage6) %>% 
+      pivot_longer(-state, names_to = "year", values_to = "minwage") %>% 
+      separate(minwage, into = c("minwageL", "minwageU"), sep = "-", remove = F) %>% 
+      mutate(year = as.numeric(gsub("[^0-9]+", "", year)),
+             minwageL = as.numeric(gsub("[^0-9.]+", "", minwageL, perl = TRUE)),
+             minwageU = ifelse(is.na(minwageU), minwageL, as.numeric(gsub("[^0-9.]+", "", minwageU, perl = TRUE))),
+             minwageL = ifelse(state=="Nevada" & year==2022, 9.50, minwageL),
+             minwageU = ifelse(state=="Nevada" & year==2022, 10.50, minwageU)) %>% 
+      filter(!(state %in% c("Guam", "Puerto Rico", "U.S. Virgin Islands")))
+    
+  # assign federal min if min is missing or fed > state min 
+    fedmin <- mintab %>% 
+      filter(state=="Federal (FLSA)") %>% 
+      mutate(fedmin = minwageL) %>% 
+      select(year, fedmin)
+    mintab <- mintab %>% 
+      left_join(fedmin) %>% 
+      mutate(minwageL = ifelse(is.na(minwageL) | fedmin>minwageL, fedmin, minwageL),
+             minwageU = ifelse(is.na(minwageU) | fedmin>minwageU, fedmin, minwageU)) %>% 
+      filter(state!="Federal (FLSA)") %>% 
+      select(-minwage) 
+  
+    
+  
+# 4a. Create a new column that stores the state minimum wage for each state and year
+mintab <- mintab %>%
+  mutate(stateminwage = ifelse(minwageL < fedmin, fedmin, minwageL)) %>%
+  filter(year >= 2000 & year <= 2023)  # Filtering for years 2000 to 2023
+  
+  
+
+# 4b.Create variables for education
+org <- org %>%
+  mutate(
+    educ_category = case_when(
+      educ %in% c(0, 1, 2, 10, 11, 12, 13, 14, 20, 21, 22, 30, 31, 32) ~ "belowhighschool",
+      educ %in% c(40, 50, 60, 70, 71, 72, 73) ~ "educ_somehighschool",
+      educ %in% c(80, 81, 90, 91, 92, 100, 110, 111) ~ "educ_somecollege",
+      educ %in% c(120, 121, 122, 123, 124, 125) ~ "educ_beyondcollege",
+      TRUE ~ NA_character_  # Set any unlisted values as NA
+    )
+  )
+
+# 4b. Fix wage and earnings variables
+org <- org %>%
+  mutate(
+    hourwage_fix = ifelse(hourwage == 999.99, NA, hourwage),
+    hourwage2_fix = ifelse(hourwage2 == 999.99, NA, hourwage2),
+    earnweek_fix = ifelse(earnweek == 9999.99, NA, earnweek),
+    earnweek2_fix = ifelse(earnweek2 == 9999.99, NA, earnweek2)
+  )
+    
+  
+
+ # 4c. Merge the CPS data ('org') with the minimum wage data ('mintab') by state and year
+datafinal <- org %>%
+  left_join(mintab, by = c("state", "year"))
+    
+
+# Prepare the dataset
+datafinal <- datafinal %>%
+  mutate(
+    time = year - 2000,                              # Time trend
+    yeardum = as.factor(year),                       # Year as factor
+    statedum = as.factor(state),                     # State as factor
+    black = ifelse(race == 200, 1, 0),               # Binary for Black workers
+    cashier = ifelse(occ2010 == 4720, 1, 0),         # Binary for Cashiers
+    employed = ifelse(empstat %in% c(10, 12), 1, 0)  # Binary for employment status
+  )
+
+
+# Filter datasets for cashiers and financial managers
+datafinal_cashiers <- datafinal %>% 
+  filter(occ2010 == 4720)  # Cashiers
+
+datafinal_finmanagers <- datafinal %>% 
+  filter(occ2010 == 120)  # Financial Managers
+
+# Filter datasets for binding and non-binding groups
+datafinal_moreedu <- datafinal %>% filter(educ >= 111)    # Non-binding group (More Educated)
+
+datafinal_lessedu <- datafinal %>% filter(educ < 71)  # Binding group (Less Educated)
+
+
+ 
+```
+
+
+
+#### Data & Econometrics
+
+My project utilizes data from the Current Population Survey Outgoing Rotation Group (CPS-ORG). I obtained the value of the minimum wage in each state for the years 2000-2023 and assigned the federal minimum if it was greater than the state minimum. I then created new variables for years of education and cleaned up the wage and earnings variables. The education variables were categorized into four categories: “below high school,” “some high school,” “some college,” and “beyond college.” The wage and earnings variables were cleaned by treating special numerical codes as missing, rather than keeping them as numbers. I merged the CPS data with the minimum wage data from the Bureau of Labor Statistics (BLS) by state and year.
+
+After setting up the data, I chose certain groups that I believed to be binding as the basis of my analysis. These groups should theoretically experience an increase in their hourly wages, as they are earning close to or equal to the minimum wage. I will examine the effect of the increase in wages on employment for these binding groups to determine whether binding wages have a statistically meaningful effect on employment, as the competitive model theory suggests a reduction in employment. I also aim to explore if there is any discrimination in wages and employment between black and white individuals in these groups. I use a pooled model regression, a two-way fixed effects regression, and a two-way fixed effects plus trend regression. I will focus on the two-way fixed effects plus trend (TWFE + trend) model, as I believe it provides the most reliable analysis. This model controls for state-specific fixed effects and time trends, which are not captured by other regressors, such as population differences across states (e.g., California having a larger population).
+
+
+
+---
+
+#### Empirical Findings: Preliminary Analysis
+
+I plot two graphs that serve as a preliminary analysis of my research. In Figure 1, I plot the employment rate relative to the population for a random sample of states over the years. In Figure 2, I plot these states’ minimum wage over the years. I do this to visually explore any trends between the employment rate and the state minimum wage. However, no specific trend connecting the two is evident. State minimum wages increase and diverge, with some maintaining the federal minimum, while others steadily increase. The employment rate follows an up-and-down pattern, akin to the business cycle. I aim to determine if certain groups experience any effects in employment when state minimum wages rise. I have chosen cashiers and less-educated workers, where I define less-educated workers as those who have reached 12th grade but have no diploma.
+
+```{r, results='asis', message=F, warning=F, comment=NA, echo=F}
+
+# List of randomly chosen states
+states <- c("California", "Texas", "New York", "Pennsylvania", "Colorado", "Alabama", 
+            "Arizona", "Georgia", "Florida", "Ohio", "Michigan", "Virginia", "Mississippi", "Oklahoma", "Arkansas", "Kansas", "Washington")
+
+# Function to calculate employment rate and minimum wage for a given state
+
+get_state_data <- function(state_name) {
+  employment_rate_data <- datafinal %>%
+    filter(state == state_name) %>%
+    group_by(year) %>%
+    summarise(
+      employed_count = sum(employed, na.rm = TRUE),
+      total_count = n(),
+      employment_rate = employed_count / total_count
+    )
+  
+  minwage_data <- datafinal %>%
+    filter(state == state_name) %>%
+    select(year, stateminwage) %>%
+    distinct()
+  
+  # Merge employment rate and minimum wage, and add a state column
+  wage_employ_data <- employment_rate_data %>%
+    left_join(minwage_data, by = "year") %>%
+    mutate(state = state_name)
+  
+  return(wage_employ_data)
+}
+
+# Apply the function to each state and combine results
+employment_data_combined <- bind_rows(lapply(states, get_state_data))
+
+# Plot employment rate over time by state
+ggplot(employment_data_combined, aes(x = year, y = employment_rate, color = state)) +
+  geom_line(size = 1) +      
+  labs(
+    title = "Figure 1: Employment Rate Over Time by State",
+    x = "Year",
+    y = "Employment Rate"
+  ) +
+  theme_minimal()
+
+
+# Plot minimum wage over time by state
+min_plot <- ggplot(employment_data_combined, aes(x = year, y = stateminwage, color = state)) +
+  geom_line() +
+  labs(
+    title = "Figure 2: State Minimum Wage Over Time",
+    x = "Year",
+    y = "State Minimum Wage"
+  ) +
+  theme_minimal()
+
+min_plot      
+
+
+
+
+```
+
+Table 1 displays the summary statistics for cashiers, and Table 2 displays it for less-educated workers. One finding that stood out was the disproportionate number of females in the “sex” row. According to the data, females are much more likely to be cashiers, which is important when interpreting the data. In addition, the "employed" row shows some cashiers who do not fall under the “employed” category, as the histogram displays some data where they are “0” in the binary. This could cause offsets in the data. I also find that around a third of the observations for cashiers have some college education, which is noteworthy. Moving to Table 2, I find that despite being classified as lower educated, this group actually has a higher median hourly wage than cashiers. This may be due to lower-educated individuals specializing in jobs like trades, which are in higher demand but have fewer suppliers. This claim is somewhat supported by the higher standard deviation for the less-educated group in Table 2 compared to cashiers, suggesting more wage discrepancy among lower-educated workers. I will now attempt to determine if there are any employment effects from the minimum wage using regression analysis, specifically the TWFE + trend model.
+
+```{r, results='asis', message=F, warning=F, comment=NA, echo=F}
+
+
+####Summary stats for cashiers
+filtered_cashiers <- datafinal_cashiers %>% 
+  select(-year, -month, -cpsid, -statefip, -pernum, -wtfinl, -cpsidp, -earnweek2, -hourwage2, -race, -nativity, -hispan, -empstat, -occ2010, -ind1990, -educ, -schlcoll, -earnwt, -hourwage, -earnweek,  -statecd, -minwageL,  -minwageU, -fedmin, -stateminwage, -time, -yeardum)  # Replace with column names to exclude
+
+datasummary_skim(filtered_cashiers, title = "Table 1: Summary Statistics for Cashiers")
+
+
+
+####Summary Stats for less educated
+filtered_lessedu <- datafinal_lessedu  %>% 
+  select(-year, -month, -cpsid, -statefip, -pernum, -wtfinl, -cpsidp, -earnweek2, -hourwage2, -race, -nativity, -hispan, -empstat, -occ2010, -ind1990, -educ, -schlcoll, -earnwt, -hourwage, -earnweek,  -statecd, -minwageL,  -minwageU, -fedmin, -stateminwage, -time, -yeardum)  # Replace with column names to exclude
+
+datasummary_skim(filtered_lessedu, title = "Table 2: Summary Statistics for Less Educated ")
+
+```
+
+
+
+
+------------------------------------------------------------------------
+
+
+#### Empirical Findings: Financial Mangers & Cahsiers
+
+Focusing on the cashier group, I run regression analyses in Tables 3 and 4 with all the models for this specific subgroup. For a robustness check, I add a group I believe should not be affected by an increase in the state minimum wage—financial managers. The findings confirm that cashiers are a binding group, as I obtain significant coefficients for this group, suggesting that the effect of the independent variable on the dependent variable is not due to chance, while the non-binding group (financial managers) does not show significant effects. When regressing hourly wages on the state minimum wage, I get a positive, significant coefficient of 0.242 from the TWFE + trend model. This suggests that an increase in the minimum wage leads to a 0.242 dollar increase in cashiers' hourly wages. The R-squared coefficient is 0.216, which seems low. However, in a complex analysis such as this, numerous factors influence the regression that it cannot fully capture. Despite the low explanatory power, the results still contribute to understanding the issue.
+
+Taking this into account, I now examine whether the competitive model theory about employment effects from a binding wage holds true for cashiers by regressing the employment variable on the state minimum wage. The results show that increasing the state minimum wage has virtually no effect on employment. This suggests that wage increases for cashiers do not come at the cost of job losses. Employers may be absorbing the increased labor costs. I will explore whether other binding groups experience similar wage-employment effects before attempting to explain potential reasons.
+
+```{r, results='asis', message=F, warning=F, comment=NA, echo=F}
+
+
+
+
+####hourwage~stateminwage
+
+# Regressions for cashiers
+regpool_cashier <- felm(hourwage_fix ~ stateminwage | 0 | 0 | state, data = datafinal_cashiers)
+regfe_cashier <- felm(hourwage_fix ~ stateminwage | state + year | 0 | state, data = datafinal_cashiers)
+regfetrend_cashier <- felm(hourwage_fix ~ stateminwage + statedum:time | state + year | 0 | state, data = datafinal_cashiers)
+
+# Regressions for financial managers
+regpool_finmanager <- felm(hourwage_fix ~ stateminwage | 0 | 0 | state, data = datafinal_finmanagers)
+regfe_finmanager <- felm(hourwage_fix ~ stateminwage | state + year | 0 | state, data = datafinal_finmanagers)
+regfetrend_finmanager <- felm(hourwage_fix ~ stateminwage + statedum:time | state + year | 0 | state, data = datafinal_finmanagers)
+
+# Combine results into a single summary table
+models_comparison <- list(
+  "OLS (Cashier)" = regpool_cashier, 
+  "TWFE (Cashier)" = regfe_cashier, 
+  "TWFE+trend (Cashier)" = regfetrend_cashier,
+  "OLS (Financial Manager)" = regpool_finmanager,
+  "TWFE (Financial Manager)" = regfe_finmanager,
+  "TWFE+trend (Financial Manager)" = regfetrend_finmanager
+)
+
+# Create a summary table comparing the two groups
+modelsummary(
+  c(models_comparison),
+  coef_map = c("stateminwage" = "State Minimum Wage"),
+  stars = TRUE,
+  gof_map = c("nobs", "r.squared"),
+  title = "Table 3: Cashiers vs. Financial Managers",
+  output = "default"
+)
+
+
+
+
+
+
+
+```
+
+```{r, results='asis', message=F, warning=F, comment=NA, echo=F}
+
+
+
+####employed~stateminwage
+
+# Regressions for cashiers (employment as the dependent variable)
+regpool_cashier_emp <- felm(employed ~ stateminwage | 0 | 0 | state, data = datafinal_cashiers)
+regfe_cashier_emp <- felm(employed ~ stateminwage | state + year | 0 | state, data = datafinal_cashiers)
+regfetrend_cashier_emp <- felm(employed ~ stateminwage + statedum:time | state + year | 0 | state, data = datafinal_cashiers)
+
+# Regressions for financial managers (employment as the dependent variable)
+regpool_finmanager_emp <- felm(employed ~ stateminwage | 0 | 0 | state, data = datafinal_finmanagers)
+regfe_finmanager_emp <- felm(employed ~ stateminwage | state + year | 0 | state, data = datafinal_finmanagers)
+regfetrend_finmanager_emp <- felm(employed ~ stateminwage + statedum:time | state + year | 0 | state, data = datafinal_finmanagers)
+
+# Combine results into a single summary table for employment
+models_comparison_emp <- list(
+  "OLS (Cashier)" = regpool_cashier_emp, 
+  "TWFE (Cashier)" = regfe_cashier_emp, 
+  "TWFE+trend (Cashier)" = regfetrend_cashier_emp,
+  "OLS (Financial Manager)" = regpool_finmanager_emp,
+  "TWFE (Financial Manager)" = regfe_finmanager_emp,
+  "TWFE+trend (Financial Manager)" = regfetrend_finmanager_emp
+)
+
+# Create a summary table comparing the two groups for employment
+modelsummary(
+  c(models_comparison_emp),
+  coef_map = c("stateminwage" = "State Minimum Wage"),
+  stars = TRUE,
+  gof_map = c("nobs", "r.squared"),
+  title = "Table 4: Employment (Cashiers vs. Financial Managers)",
+  output = "default"
+)
+
+
+```
+
+
+
+
+
+
+------------------------------------------------------------------------
+
+#### Empirical Findings: Less Educated & More Educated 
+
+For the less-educated group, the regression analysis in Table 5 displays statistically significant coefficients across all models. For a robustness check, I add a non-binding group, “more educated people,” who theoretically should not be affected by the minimum wage, as they may work in jobs not influenced by it. The data confirms that less-educated individuals are affected by an increase in the minimum wage, indicating they are a binding group. The more-educated group has no significant coefficients, supporting my hypothesis. For the less-educated group, I get a statistically significant coefficient of 0.191, suggesting that a 1 dollar increase in the minimum wage will raise this group's hourly wage by 0.191 dollar.
+
+When regressing employment on the state minimum wage for this group in Table 6, I find similar results to the cashier employment regression. Despite the binding group seeing an increase in their hourly wage, it does not come at the cost of employment. The demand for less-educated workers seems relatively inelastic. This could be due to several factors. As mentioned earlier, firms may absorb increased labor costs. Additionally, lower-skilled workers may be harder to replace or automate, making it difficult for employers to find substitutes for these workers, who may be specialized in specific jobs, such as cashiers.
+
+To add on, those types of roles often have a sort of unique type of skill that can enhance their value to employers, which can help explain why wage increases don't necessarily result in job cuts. For example, workers in low skilled positions may develop job-specific expertise, such as understanding company systems, workflows, or customer preferences. This specificity in their jobs makes them harder to replace, as the cost and time involved in training new hires can potentially outweigh any potential savings from lower wages. Due to this, employers are more incentivized to retain these workers, despite higher labor costs.
+
+
+
+```{r, results='asis', message=F, warning=F, comment=NA, echo=F}
+
+
+
+
+####hourwage~stateminwage
+
+# Pooled model for Non-Binding group
+regpool_moreedu<- felm(hourwage_fix ~ stateminwage | 0 | 0 | state, data = datafinal_moreedu)
+
+# Pooled model for Binding group
+regpool_lessedu <- felm(hourwage_fix ~ stateminwage | 0 | 0 | state, data = datafinal_lessedu)
+
+# State and year fixed effects for Non-Binding group
+regfe_moreedu <- felm(hourwage_fix ~ stateminwage | state + year | 0 | state, data = datafinal_moreedu)
+
+# State and year fixed effects for Binding group
+regfe_lessedu<- felm(hourwage_fix ~ stateminwage | state + year | 0 | state, data = datafinal_lessedu)
+
+# State and year fixed effects with state trends for Non-Binding group
+regfetrend_moreedu <- felm(hourwage_fix ~ stateminwage + statedum:time | state + year | 0 | state, data = datafinal_moreedu)
+
+# State and year fixed effects with state trends for Binding group
+regfetrend_lessedu <- felm(hourwage_fix ~ stateminwage + statedum:time | state + year | 0 | state, data = datafinal_lessedu)
+
+# Combine results into a single table
+models_moreedu <- list("OLS (More Educated)" = regpool_moreedu, "TWFE (More Educated)" = regfe_moreedu, "TWFE+trend (More Educated)" = regfetrend_moreedu)
+models_lessedu <- list("OLS (Less Educated)" = regpool_lessedu, "TWFE (Less Educated)" = regfe_lessedu, "TWFE+trend (Less Educated)" = regfetrend_lessedu)
+
+# Compare results for both groups
+modelsummary(
+  c(models_lessedu, models_moreedu),
+  coef_map = c("stateminwage" = "State Minimum Wage"),
+  stars = TRUE,
+  gof_map = c("nobs", "r.squared"),
+  title = "Table 5: Binding (Less Educated) vs. Non-Binding (More Educated)",
+  output = "default"
+)
+
+```
+
+```{r, results='asis', message=F, warning=F, comment=NA, echo=F}
+
+
+
+####employed~stateminwage
+
+# Pooled model for Non-Binding group
+ regpool_moreedu_e <- felm(employed ~ stateminwage | 0 | 0 | state, data =  datafinal_moreedu)
+
+# Pooled model for Binding group
+regpool_lessedu_e <- felm(employed ~ stateminwage | 0 | 0 | state, data = datafinal_lessedu)
+
+# State and year fixed effects for Non-Binding group
+regfe_moreedu_e <- felm(employed ~ stateminwage | state + year | 0 | state, data =  datafinal_moreedu)
+
+# State and year fixed effects for Binding group
+regfe_lessedu_e <- felm(employed ~ stateminwage | state + year | 0 | state, data = datafinal_lessedu)
+
+# State and year fixed effects with state trends for Non-Binding group
+regfetrend_moreedu_e <- felm(employed ~ stateminwage + statedum:time | state + year | 0 | state, data =  datafinal_moreedu)
+
+# State and year fixed effects with state trends for Binding group
+regfetrend_lessedu_e<- felm(employed ~ stateminwage + statedum:time | state + year | 0 | state, data = datafinal_lessedu)
+
+# Combine results into a single table
+models_moreedu_e <- list("OLS (More Educated)" =  regpool_moreedu_e, "TWFE (More Educated)" = regfe_moreedu_e, "TWFE+trend (More Educated)" = regfetrend_moreedu_e)
+models_lessedu_e <- list("OLS (Less Educated)" = regpool_lessedu_e, "TWFE (Less Educated)" = regfe_lessedu_e, "TWFE+trend (Less Educated)" = regfetrend_lessedu_e)
+
+# Compare results for both groups
+modelsummary(
+  c(models_lessedu_e, models_moreedu_e),
+  coef_map = c("stateminwage" = "State Minimum Wage"),
+  stars = TRUE,
+  gof_map = c("nobs", "r.squared"),
+  title = "Table 6: Binding (Less Educated) vs. Non-Binding (More Educated) Employment",
+  output = "default"
+)
+
+
+
+```
+
+
+
+
+
+------------------------------------------------------------------------
+
+
+
+
+#### Empirical Findings: Black & White Cashiers
+
+I now examine if there is any form of discrimination between black and white workers in the same occupation or educational level in relation to wages and employment. In Table 7, when regressing hourly wages on the state minimum wage, both groups show statistically significant coefficients. Black cashiers see a 0.184 dollar increase in their hourly wages for each increase in the state minimum wage, while white cashiers see a 0.235 dollar increase. The data suggests that black cashiers earn about 0.051 dollars less than their white counterparts, implying some degree of wage discrimination. However, I believe these results should be taken with caution. The job of a cashier can vary widely, and there may be a disproportionate number of white cashiers working in higher-paying retail jobs compared to black cashiers, who may be concentrated in lower-paying retail sectors. This could also reflect deeply rooted systematic issues, and the implementation of a binding wage may not fully address these disparities. The data also shows a substantial difference in the number of observations between these groups, which could influence the coefficients.
+
+When regressing employment on the state minimum wage for this group in Table 8, I find no significant coefficients or results. The absence of significant employment effects suggests that employers did not reduce jobs, even with slightly unequal wage increases. This contradicts the theory of some economists who claim that a binding wage might lead employers to discriminate more. This theory relies on the competitive market model, where a binding wage creates an excess supply of workers, and employers can choose more freely with fewer consequences. While wages tell one story, employment data suggests no effect of discrimination.
+
+```{r, results='asis', message=F, warning=F, comment=NA, echo=F}
+
+
+# Filter datasets for Black and White cashiers
+datafinal_black_cashiers <- datafinal %>% filter(occ2010 == 4720, race == 200) # Black cashiers
+datafinal_white_cashiers <- datafinal %>% filter(occ2010 == 4720, race == 100) # White cashiers
+
+####hourwage~stateminwage
+
+# Pooled model
+regpool_black_cashier <- felm(hourwage_fix ~ stateminwage | 0 | 0 | state, data = datafinal_black_cashiers)
+regpool_white_cashier <- felm(hourwage_fix ~ stateminwage | 0 | 0 | state, data = datafinal_white_cashiers)
+
+# State and year fixed effects
+regfe_black_cashier <- felm(hourwage_fix ~ stateminwage | state + year | 0 | state, data = datafinal_black_cashiers)
+regfe_white_cashier <- felm(hourwage_fix ~ stateminwage | state + year | 0 | state, data = datafinal_white_cashiers)
+
+# State and year fixed effects with state trends
+regfetrend_black_cashier <- felm(hourwage_fix ~ stateminwage + statedum:time | state + year | 0 | state, data = datafinal_black_cashiers)
+regfetrend_white_cashier <- felm(hourwage_fix ~ stateminwage + statedum:time | state + year | 0 | state, data = datafinal_white_cashiers)
+
+
+# Combine results into lists for Black and White cashiers
+models_black_cashiers <- list("OLS (Black Cashiers)" = regpool_black_cashier, 
+                              "TWFE (Black Cashiers)" = regfe_black_cashier, 
+                              "TWFE+trend (Black Cashiers)" = regfetrend_black_cashier)
+
+models_white_cashiers <- list("OLS (White Cashiers)" = regpool_white_cashier, 
+                              "TWFE (White Cashiers)" = regfe_white_cashier, 
+                              "TWFE+trend (White Cashiers)" = regfetrend_white_cashier)
+
+# Combine results for both groups into a single summary table
+modelsummary(
+  c(models_black_cashiers, models_white_cashiers),
+  coef_map = c("stateminwage" = "State Minimum Wage"),
+  stars = TRUE,
+  gof_map = c("nobs", "r.squared"),
+  title = "Table 7: Black Cashiers vs. White Cashiers",
+  output = "default"
+)
+
+  
+```
+
+```{r, results='asis', message=F, warning=F, comment=NA, echo=F}
+
+###employed~stateminwage
+
+# Pooled model
+regpool_black_cashier_emp <- felm(employed ~ stateminwage | 0 | 0 | state, data = datafinal_black_cashiers)
+regpool_white_cashier_emp <- felm(employed ~ stateminwage | 0 | 0 | state, data = datafinal_white_cashiers)
+
+# State and year fixed effects
+regfe_black_cashier_emp <- felm(employed ~ stateminwage | state + year | 0 | state, data = datafinal_black_cashiers)
+regfe_white_cashier_emp <- felm(employed ~ stateminwage | state + year | 0 | state, data = datafinal_white_cashiers)
+
+# State and year fixed effects with state trends
+regfetrend_black_cashier_emp <- felm(employed ~ stateminwage + statedum:time | state + year | 0 | state, data = datafinal_black_cashiers)
+regfetrend_white_cashier_emp <- felm(employed ~ stateminwage + statedum:time | state + year | 0 | state, data = datafinal_white_cashiers)
+
+
+
+# Combine results into a single table
+models_cashier_emp <- list(
+  "OLS (Black Cashiers)" = regpool_black_cashier_emp,
+  "TWFE (Black Cashiers)" = regfe_black_cashier_emp,
+  "TWFE+trend (Black Cashiers)" = regfetrend_black_cashier_emp,
+  "OLS (White Cashiers)" = regpool_white_cashier_emp,
+  "TWFE (White Cashiers)" = regfe_white_cashier_emp,
+  "TWFE+trend (White Cashiers)" = regfetrend_white_cashier_emp
+)
+
+# Generate summary table
+modelsummary(
+  models_cashier_emp,
+  coef_map = c("stateminwage" = "State Minimum Wage"),
+  stars = TRUE,
+  gof_map = c("nobs", "r.squared"),
+  title = "Table 8: Employment for Black vs. White Cashiers",
+  output = "default"
+)
+
+
+  
+```
+
+
+
+------------------------------------------------------------------------
+
+#### Empirical Findings: Black & White Less Educated
+
+For both black and white less-educated individuals, I find that the results in Table 9 are similar to those for the black and white cashier groups. Black less-educated individuals experience a 0.152 dollar increase in their hourly wage for each increase in the state minimum wage, while white less-educated individuals experience a 0.193 dollars  increase. The difference of 0.041 dollars could be relevant, given that both groups theoretically have similar qualifications. However, unobserved factors could explain this discrepancy, such as differences in job types or enforcement of minimum wage laws in different areas. This could also reflect a systemic issue that a binding wage cannot solve.
+
+In terms of employment effects, in Table 10, I again find no significant effect or relevance. This suggests that the demand for lower-skilled labor is inelastic, regardless of race, with little to no discrimination in employment. However, as before, wages tell a different story.
+
+```{r, results='asis', message=F, warning=F, comment=NA, echo=F}
+
+
+# Filter datasets for Black and White less educated individuals
+datafinal_black_binding <- datafinal %>% 
+  filter(educ < 71, race == 200)  # Black less educated
+
+datafinal_white_binding <- datafinal %>% 
+  filter(educ < 71, race == 100)  # White less educated
+
+
+####hourwage~stateminwage
+
+# Pooled model for Black less educated group
+regpool_black_binding <- felm(hourwage_fix ~ stateminwage | 0 | 0 | state, data = datafinal_black_binding)
+
+# Pooled model for White less educated group
+regpool_white_binding <- felm(hourwage_fix ~ stateminwage | 0 | 0 | state, data = datafinal_white_binding)
+
+# State and year fixed effects for Black less educated group
+regfe_black_binding <- felm(hourwage_fix ~ stateminwage | state + year | 0 | state, data = datafinal_black_binding)
+
+# State and year fixed effects for White less educated group
+regfe_white_binding <- felm(hourwage_fix ~ stateminwage | state + year | 0 | state, data = datafinal_white_binding)
+
+# State and year fixed effects with state trends for Black less educated group
+regfetrend_black_binding <- felm(hourwage_fix ~ stateminwage + statedum:time | state + year | 0 | state, data = datafinal_black_binding)
+
+# State and year fixed effects with state trends for White less educated group
+regfetrend_white_binding <- felm(hourwage_fix ~ stateminwage + statedum:time | state + year | 0 | state, data = datafinal_white_binding)
+
+# Combine results into lists for Black and White less educated individuals
+models_black_binding <- list("OLS (Black Less Educated)" = regpool_black_binding, 
+                             "TWFE (Black Less Educated)" = regfe_black_binding, 
+                             "TWFE+trend (Black Less Educated)" = regfetrend_black_binding)
+
+models_white_binding <- list("OLS (White Less Educated)" = regpool_white_binding, 
+                             "TWFE (White Less Educated)" = regfe_white_binding, 
+                             "TWFE+trend (White Less Educated)" = regfetrend_white_binding)
+
+# Combine results for both groups into a single summary table
+modelsummary(
+  c(models_black_binding, models_white_binding),
+  coef_map = c("stateminwage" = "State Minimum Wage"),
+  stars = TRUE,
+  gof_map = c("nobs", "r.squared"),
+  title = "Table 9: Black vs. White Less Educated Individuals",
+  output = "default"
+)
+
+  
+####employed~stateminwage
+
+# Pooled model for Black less educated group
+regpool_black_binding <- felm(employed ~ stateminwage | 0 | 0 | state, data = datafinal_black_binding)
+
+# Pooled model for White less educated group
+regpool_white_binding <- felm(employed ~ stateminwage | 0 | 0 | state, data = datafinal_white_binding)
+
+# State and year fixed effects for Black less educated group
+regfe_black_binding <- felm(employed ~ stateminwage | state + year | 0 | state, data = datafinal_black_binding)
+
+# State and year fixed effects for White less educated group
+regfe_white_binding <- felm(employed ~ stateminwage | state + year | 0 | state, data = datafinal_white_binding)
+
+# State and year fixed effects with state trends for Black less educated group
+regfetrend_black_binding <- felm(employed ~ stateminwage + statedum:time | state + year | 0 | state, data = datafinal_black_binding)
+
+# State and year fixed effects with state trends for White less educated group
+regfetrend_white_binding <- felm(employed ~ stateminwage + statedum:time | state + year | 0 | state, data = datafinal_white_binding)
+
+# Combine results into lists for Black and White less educated individuals
+models_black_binding <- list("OLS (Black Less Educated)" = regpool_black_binding, 
+                             "TWFE (Black Less Educated)" = regfe_black_binding, 
+                             "TWFE+trend (Black Less Educated)" = regfetrend_black_binding)
+
+models_white_binding <- list("OLS (White Less Educated)" = regpool_white_binding, 
+                             "TWFE (White Less Educated)" = regfe_white_binding, 
+                             "TWFE+trend (White Less Educated)" = regfetrend_white_binding)
+
+# Combine results for both groups into a single summary table
+modelsummary(
+  c(models_black_binding, models_white_binding),
+  coef_map = c("stateminwage" = "State Minimum Wage"),
+  stars = TRUE,
+  gof_map = c("nobs", "r.squared"),
+  title = "Table 10: Black vs. White Less Educated Employment",
+  output = "default"
+)
+
+
+
+
+```
+
+
+
+---
+
+#### Threats to Validity
+
+Some potential threats to my analysis’ validity include both internal and external threats. For instance, the data I utilized–the CPS-ORG–is a survey, and people can make errors when self reporting answers, which can lead to offsets in data, as seen in Table 1. In addition, omitted variable bias is always a concern when conducting statistical analysis such as this. Migration and worker mobility can be an issue presented with the analysis, for example, if low-wage workers move away from high minimum-wage states, observed employment or wage effects may be biased. Another issue that comes to mind is the issue of undocumented persons and the lack of data from them, which I believe may affect the less-educated subgroup more. This is because in states where undocumented people are found more, the lower educated group may be more exposed to competition from undocumented workers, especially in low wage sectors where informal work is typically seen more. Obscure employment effects in the lower educated group could potentially reflect undocumented worker substitution rather than a true lack of significance for the employment effects. The biggest external threat to validity that comes to mind is the variation in state policy. Although the two way fixed effects plus state trend interaction may mitigate it a bit, policy is not as simple to account for. Things such as the variation of a state’s enforcement of certain policies, as well as firm regulations, or union power shifting are hard to capture in this model, I believe other variables would be needed to capture these types of issues.
+
+
+---
+
+
+#### Conclusion
+
+This project contributes to the ongoing debate about the effects of minimum wage increases on employment by analyzing data from cashiers and less-educated workers across various states. The results suggest that while minimum wage increases can lead to wage growth, employment effects are not significant for the binding groups chosen, suggesting that firms may absorb the higher wages, or that labor demand is inelastic for certain types of workers. Additionally, the evidence shows some wage disparities between black and white workers, particularly in occupations like cashiers, but no substantial impact on employment.
+
+Given the nuances and complexities of the minimum wage, further research should investigate other factors that influence these outcomes, such as differences in firm size, industry type, or geographic location. In addition, future studies could also explore the broader economic effects of minimum wage increases, including their impact on poverty reduction, inequality, and consumer behavior.
+
+
+
+
+
+
+

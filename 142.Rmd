@@ -1,0 +1,436 @@
+---
+title: 'Do firms adjust accordingly to policy changes? Analysis from the NBAs 2004-05 hand checking rule implementation'
+output:
+  html_document:
+    fig_height: 3
+    fig_width: 6
+    highlight: textmate
+    theme: cerulean
+---
+
+```{r setup, echo=FALSE, message=F, warning=F  }
+
+#=================================================================================
+#   This setup chunk is used for every assignment: 
+#   Modify line #24, leave the rest alone, and skip down to line #73!
+#=================================================================================
+
+ ###Set working directory
+    setwd("/Users/wancholuna/Desktop/Econ154")
+    
+### Load the packages (all must have been installed)
+    library(knitr)
+    library(AER)
+    library(sandwich)
+    library(tidyverse)  
+    library(plm)
+    library(haven)
+    library(readxl)
+    library(modelsummary) 
+    library(lfe)
+    library(ivreg)
+    library(stargazer)
+    library(rvest)
+    library(lfe)
+    
+### More settings
+  
+  
+  # turn off scientific notation except for big numbers
+    options(scipen = 9)
+  # set font size for ggplot (default is 12)
+    theme_set(theme_gray(base_size = 12))
+  
+```
+
+<base target="_top"/>
+
+ECON 173 Assignment #5\
+Name: Wancho Luna\
+November 10, 2024
+
+------------------------------------------------------------------------
+
+
+#### Obtaining the Data
+
+```{r, results='asis', message=F, warning=F, comment=NA, echo=T}
+
+### Data input and manipulation
+
+
+#### Define the URL 2000 season
+url <- "http://bkref.com/pi/shareit/yOk8d"
+
+# Read the webpage
+webpage <- read_html(url)
+
+# Extract the HTML table(s)
+tables <- html_nodes(webpage, "table")
+
+# Assuming we want the first table on the page
+twothousandseason <- html_table(tables[[1]], fill = TRUE)
+
+# Convert to a data frame
+twothousandseason <- as.data.frame(twothousandseason)
+
+# Use the second row as the new column names
+colnames(twothousandseason) <- twothousandseason[1, ]
+
+# Remove the first two rows (original headers and the new column names row)
+twothousandseason <- twothousandseason[-c(1), ]
+
+#### Define the URL 2001 season
+url <- "http://bkref.com/pi/shareit/DQ7Ck"
+
+# Read the webpage
+webpage <- read_html(url)
+
+# Extract the HTML table(s)
+tables <- html_nodes(webpage, "table")
+
+# Assuming we want the first table on the page
+twothousandoneseason <- html_table(tables[[1]], fill = TRUE)
+
+# Convert to a data frame
+twothousandoneseason <- as.data.frame(twothousandoneseason)
+
+ # Use the second row as the new column names
+colnames(twothousandoneseason) <- twothousandoneseason[1, ]
+
+# Remove the first two rows (original headers and the new column names row)
+twothousandoneseason <- twothousandoneseason[-c(1), ]
+
+#### Define the URL 2002 season
+url <- "http://bkref.com/pi/shareit/9Arl4"
+
+# Read the webpage
+webpage <- read_html(url)
+
+# Extract the HTML table(s)
+tables <- html_nodes(webpage, "table")
+
+# Assuming we want the first table on the page
+twothousandtwoseason <- html_table(tables[[1]], fill = TRUE)
+
+# Convert to a data frame
+twothousandtwoseason <- as.data.frame(twothousandtwoseason)
+
+ # Use the second row as the new column names
+colnames(twothousandtwoseason) <- twothousandtwoseason[1, ]
+
+# Remove the first two rows (original headers and the new column names row)
+twothousandtwoseason <- twothousandtwoseason[-c(1), ]
+
+
+#### Define the URL 2003 season
+url <- "http://bkref.com/pi/shareit/71FBs"
+
+# Read the webpage
+webpage <- read_html(url)
+
+# Extract the HTML table(s)
+tables <- html_nodes(webpage, "table")
+
+# Assuming we want the first table on the page
+twothousandthreeseason <- html_table(tables[[1]], fill = TRUE)
+
+# Convert to a data frame
+twothousandthreeseason <- as.data.frame(twothousandthreeseason)
+
+ # Use the second row as the new column names
+colnames(twothousandthreeseason) <- twothousandthreeseason[1, ]
+
+# Remove the first two rows (original headers and the new column names row)
+twothousandthreeseason <- twothousandthreeseason[-c(1), ]
+
+#### Define the URL 2004 season
+url <- "http://bkref.com/pi/shareit/MAS4i"
+
+# Read the webpage
+webpage <- read_html(url)
+
+# Extract the HTML table(s)
+tables <- html_nodes(webpage, "table")
+
+# Assuming we want the first table on the page
+twothousandfourseason <- html_table(tables[[1]], fill = TRUE)
+
+# Convert to a data frame
+twothousandfourseason <- as.data.frame(twothousandfourseason)
+
+ # Use the second row as the new column names
+colnames(twothousandfourseason) <- twothousandfourseason[1, ]
+
+# Remove the first two rows (original headers and the new column names row)
+twothousandfourseason <- twothousandfourseason[-c(1), ]
+
+#### Define the URL 2005 season
+url <- "http://bkref.com/pi/shareit/4Cj1y"
+
+# Read the webpage
+webpage <- read_html(url)
+
+# Extract the HTML table(s)
+tables <- html_nodes(webpage, "table")
+
+# Assuming we want the first table on the page
+twothousandfiveseason <- html_table(tables[[1]], fill = TRUE)
+
+# Convert to a data frame
+twothousandfiveseason <- as.data.frame(twothousandfiveseason)
+
+ # Use the second row as the new column names
+colnames(twothousandfiveseason) <- twothousandfiveseason[1, ]
+
+# Remove the first two rows (original headers and the new column names row)
+twothousandfiveseason <- twothousandfiveseason[-c(1), ]
+twothousandfiveseason <- twothousandfiveseason[-21, ]
+
+
+
+#### Define the URL 2006 season
+url <- "http://bkref.com/pi/shareit/sDRCr"
+
+# Read the webpage
+webpage <- read_html(url)
+
+# Extract the HTML table(s)
+tables <- html_nodes(webpage, "table")
+
+# Assuming we want the first table on the page
+twothousandsixseason <- html_table(tables[[1]], fill = TRUE)
+
+# Convert to a data frame
+twothousandsixseason <- as.data.frame(twothousandsixseason)
+
+ # Use the second row as the new column names
+colnames(twothousandsixseason) <- twothousandsixseason[1, ]
+
+# Remove the first two rows (original headers and the new column names row)
+twothousandsixseason <- twothousandsixseason[-c(1), ]
+twothousandsixseason <- twothousandsixseason[-21, ]
+
+#### Define the URL 2007 season
+url <- "http://bkref.com/pi/shareit/PciSN"
+
+# Read the webpage
+webpage <- read_html(url)
+
+# Extract the HTML table(s)
+tables <- html_nodes(webpage, "table")
+
+# Assuming we want the first table on the page
+twothousandsevenseason <- html_table(tables[[1]], fill = TRUE)
+
+# Convert to a data frame
+twothousandsevenseason <- as.data.frame(twothousandsevenseason)
+
+ # Use the second row as the new column names
+colnames(twothousandsevenseason) <- twothousandsevenseason[1, ]
+
+# Remove the first two rows (original headers and the new column names row)
+twothousandsevenseason <- twothousandsevenseason[-c(1), ]
+twothousandsevenseason <- twothousandsevenseason[-21,]
+
+#### Define the URL 2008 season
+url <- "http://bkref.com/pi/shareit/Bvtjc"
+
+# Read the webpage
+webpage <- read_html(url)
+
+# Extract the HTML table(s)
+tables <- html_nodes(webpage, "table")
+
+# Assuming we want the first table on the page
+twothousandeightseason <- html_table(tables[[1]], fill = TRUE)
+
+# Convert to a data frame
+twothousandeightseason <- as.data.frame(twothousandeightseason)
+
+ # Use the second row as the new column names
+colnames(twothousandeightseason) <- twothousandeightseason[1, ]
+
+# Remove the first two rows (original headers and the new column names row)
+twothousandeightseason <- twothousandeightseason[-c(1), ]
+twothousandeightseason <- twothousandeightseason[-21,]
+
+#### Define the URL 2009 season
+url <- "http://bkref.com/pi/shareit/6dL2P"
+
+# Read the webpage
+webpage <- read_html(url)
+
+# Extract the HTML table(s)
+tables <- html_nodes(webpage, "table")
+
+# Assuming we want the first table on the page
+twothousandnineseason <- html_table(tables[[1]], fill = TRUE)
+
+# Convert to a data frame
+twothousandnineseason <- as.data.frame(twothousandnineseason)
+
+ # Use the second row as the new column names
+colnames(twothousandnineseason) <- twothousandnineseason[1, ]
+
+# Remove the first two rows (original headers and the new column names row)
+twothousandnineseason <- twothousandnineseason[-c(1), ]
+twothousandnineseason <- twothousandnineseason[-21,]
+
+# Remove columns 22, 23, and 25
+twothousandseason <- twothousandseason %>% select(-c(22, 23, 25))
+twothousandoneseason <- twothousandoneseason %>% select(-c(22, 23, 25))
+twothousandtwoseason <- twothousandtwoseason %>% select(-c(22, 23, 25))
+twothousandthreeseason <- twothousandthreeseason %>% select(-c(22, 23, 25))
+twothousandfourseason <- twothousandfourseason %>% select(-c(22, 23, 25))
+twothousandfiveseason <- twothousandfiveseason %>% select(-c(22, 23, 25))
+twothousandsixseason <- twothousandsixseason %>% select(-c(22, 23, 25))
+twothousandsevenseason <- twothousandsevenseason %>% select(-c(22, 23, 25))
+twothousandeightseason <- twothousandeightseason %>% select(-c(22, 23, 25))
+twothousandnineseason <- twothousandnineseason %>% select(-c(22, 23, 25))
+
+# Create a list of data frames and their corresponding season names
+season_list <- list(
+  "2000" = twothousandseason,
+  "2001" = twothousandoneseason,
+  "2002" = twothousandtwoseason,
+  "2003" = twothousandthreeseason,
+  "2004" = twothousandfourseason,
+  "2005" = twothousandfiveseason,
+  "2006" = twothousandsixseason,
+  "2007" = twothousandsevenseason,
+  "2008" = twothousandeightseason,
+  "2009" = twothousandnineseason
+)
+
+# Add a season column and combine all data frames without changing column names
+nbaseasons <- bind_rows(
+  lapply(names(season_list), function(season) {
+    df <- season_list[[season]]
+    df$season <- season  # Add a column with the season name
+    
+    # Ensure column names are not altered
+    colnames(df) <- make.names(colnames(df), unique = TRUE)
+    
+    return(df)
+  })
+)
+
+```
+
+------------------------------------------------------------------------
+
+#### Preliminary Analysis
+
+```{r, results='asis', message=F, warning=F, comment=NA, echo=T}
+
+
+#convert everything to numberic
+nbaseasons <- nbaseasons %>%
+  mutate(across(c(W, L, PW, PL, MOV, SOS, SRS, ORtg, DRtg, NRtg, Pace, FTr, `X3PAr`, `TS.`, `eFG.`, `TOV.`, `Attend.`, `Attend..G`, ORB., FT.FGA, DRB.), as.numeric))
+
+# Post Hand Check
+nbaseasons <- nbaseasons %>%
+  mutate(post_rule = if_else(season >= 2005, 1, 0))
+
+
+ggplot(nbaseasons, aes(x = season, y = ORtg)) +
+  geom_point() +
+  labs(title = "Scatter Plot of Offensive Rating Over Time", x = "Season", y = "Offensive Rating")
+
+# Ensure that 'season' is numeric
+nbaseasons$season <- as.numeric(nbaseasons$season)
+
+# Plot with separate regression lines for before and after the rule change
+ggplot(nbaseasons, aes(x = season, y = ORtg)) +
+  geom_point(aes(color = as.factor(post_rule)), alpha = 0.6) +
+  geom_smooth(data = nbaseasons %>% filter(post_rule == 0), 
+              aes(x = season, y = ORtg), 
+              method = "lm", 
+              se = FALSE, 
+              color = "blue", 
+              linetype = "dashed") +
+  geom_smooth(data = nbaseasons %>% filter(post_rule == 1), 
+              aes(x = season, y = ORtg), 
+              method = "lm", 
+              se = FALSE, 
+              color = "red", 
+              linetype = "solid") +
+  labs(title = "Scatter Plot of Offensive Rating Over Time with Regression Lines",
+       x = "Season", y = "Offensive Rating") +
+  theme_minimal()
+
+
+ggplot(nbaseasons, aes(x = season, y = DRtg)) +
+  geom_point() +
+  labs(title = "Scatter Plot of Defensive Rating Over Time", x = "Season", y = "Defensive Rating")
+
+
+
+# Check the number of observations by `post_rule`
+nbaseasons %>% group_by(post_rule) %>% summarise(count = n())
+
+
+
+
+
+      
+# Convert the dataset to panel data format
+pdata <- pdata.frame(nbaseasons, index = c("Team", "season"))
+
+
+
+
+# Summary for post_rule == 0, excluding specified columns and filtering for specific teams
+datasummary_skim(
+  pdata %>% 
+    filter(post_rule == 0, Team %in% c("Golden State Warriors", "Los Angeles Lakers", "Los Angeles Clippers", "Sacramento Kings", "Golden State Warriors*", "Los Angeles Lakers*", "Los Angeles Clippers*", "Sacramento Kings*")) %>%
+    select(-`W`, -`L`, -`PW`, -`PL`, -`MOV`, -`SOS`, -`SRS`),
+  title = "Panel Data (Before Rule Change)"
+)
+
+# Summary for post_rule == 1, excluding specified columns and filtering for specific teams
+datasummary_skim(
+  pdata %>% 
+    filter(post_rule == 1, Team %in% c("Golden State Warriors", "Los Angeles Lakers", "Los Angeles Clippers", "Sacramento Kings", "Golden State Warriors*", "Los Angeles Lakers*", "Los Angeles Clippers*", "Sacramento Kings*")) %>%
+    select(-`W`, -`L`, -`PW`, -`PL`, -`MOV`, -`SOS`, -`SRS`),
+  title = "Panel Data (After Rule Change)"
+)
+
+
+
+```
+
+------------------------------------------------------------------------
+
+#### Regression Analysis
+
+```{r, results='asis', message=F, warning=F, comment=NA, echo=T}
+
+      
+# Run separate regressions for each variable on post_rule
+model_ORTG <- plm(ORtg ~ post_rule, data = pdata, model = "within")
+model_DRTG <- plm(DRtg ~ post_rule, data = pdata, model = "within")
+model_pace <- plm(Pace ~ post_rule, data = pdata, model = "within")
+model_tov <- plm(TOV. ~ post_rule, data = pdata, model = "within")
+model_ftr <- plm(FTr ~ post_rule, data = pdata, model = "within")
+model_ts <- plm(TS. ~ post_rule, data = pdata, model = "within")
+model_efg <- plm(eFG. ~ post_rule, data = pdata, model = "within")
+model_ftfga <- plm(FT.FGA ~ post_rule, data = pdata, model = "within")
+model_3PA<- plm(X3PAr ~ post_rule, data = pdata, model = "within")
+model_ORB <- plm(ORB. ~ post_rule, data = pdata, model = "within")
+model_DRB <- plm(DRB. ~ post_rule, data = pdata, model = "within")
+
+# Create a list of models
+models <- list("Offensive Rating" = model_ORTG, "Defensive Rating"= model_DRTG, "Free Throws per FG attempt"= model_ftfga,"Percentage of Three Pointers Attempted"= model_3PA, "Offensive Rebound Percentage" = model_ORB, "Defensive Rebound Percentage"= model_DRB, "Pace" = model_pace, "Turnover Percentage" = model_tov, "Free Throw Attempt Rate" = model_ftr, "Total Shot Percentage" = model_ts, "Effective Field Goal Percentage" = model_efg)
+
+# Generate the summary table with customized settings
+modelsummary(models,
+             coef_map = c("post_rule" = "Post-Rule"),
+             stars = TRUE,
+             gof_map = c("nobs", "r.squared"),
+             title = "Effects of Post-Rule on Metrics",
+             output = "default")
+
+  
+```
